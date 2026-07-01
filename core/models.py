@@ -1,5 +1,5 @@
 class RawNote:
-    """Represents a raw note fetched from Telegram."""
+    """Represents a raw note"""
     def __init__(self, content, title=None, deadline=None, note_type="misc"):
         self.content = content
         self.title = title

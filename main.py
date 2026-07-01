@@ -19,7 +19,7 @@ async def main():
         return
 
     # Initialize UART for the thermal printer
-    uart = UART(1, baudrate=9600, tx=18, rx=17)
+    uart = UART(1, baudrate=9600, tx=17, rx=18)
 
     # Initialize the App manager
     app = App()
