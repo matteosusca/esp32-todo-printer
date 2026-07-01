@@ -1,0 +1,5 @@
+{
+  "wifi_ssid": "YOUR_WIFI_NAME",
+  "wifi_password": "YOUR_WIFI_PASSWORD",
+  "telegram_token": "YOUR_BOT_TOKEN"
+}
