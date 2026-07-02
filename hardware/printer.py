@@ -38,6 +38,15 @@ class PrintWorker:
         self.delay_ms = delay_ms
         self.is_running = False
 
+    def stop(self):
+        """Stop the background printing worker loop.
+
+        Sets the running state to False so the worker loop exits cleanly at
+        the end of the current task chunk or job.
+        """
+        self.is_running = False
+        print("PrintWorker stop signal received.")
+
     async def run(self):
         """Start the background printing worker loop.
 
