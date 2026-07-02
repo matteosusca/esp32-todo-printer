@@ -1,12 +1,13 @@
 """Telegram Long Polling Note Listener.
 
-Fetches text and photo messages from a Telegram bot asynchronously and maps
-them to RawNote DTOs.
+Fetches text and photo messages from a Telegram bot asynchronously using aiohttp
+ClientSession and maps them to RawNote DTOs.
 """
 
 import json
 import sys
 import uasyncio
+import aiohttp
 from listeners.base import BaseListener
 from core.models import RawNote
 
@@ -32,40 +33,48 @@ class TelegramListener(BaseListener):
         super().__init__(callback)
         self.token = token
         self.offset = 0
+        self.session = None  # Persistent aiohttp session reused across polls
 
     async def listen(self):
-        """Start the async long polling loop."""
+        """Start the async long polling loop with a persistent ClientSession."""
         self.is_listening = True
         print("TelegramListener: Polling loop started.")
 
-        while self.is_listening:
-            try:
-                # Perform long polling request (timeout parameter keeps it open on server side)
-                updates = await self._api_request("getUpdates", {
-                    "offset": self.offset,
-                    "timeout": 30,
-                    "allowed_updates": ["message"]
-                })
-
-                if updates and updates.get("ok"):
-                    for update in updates.get("result", []):
-                        # Track offset to avoid fetching duplicates
-                        self.offset = update["update_id"] + 1
-                        
-                        message = update.get("message")
-                        if message:
-                            await self._handle_message(message)
+        try:
+            # Establish a persistent session to enable connection pooling (reuses SSL handshake)
+            async with aiohttp.ClientSession() as session:
+                self.session = session
                 
-            except uasyncio.CancelledError:
-                print("TelegramListener: Loop cancelled.")
-                break
-            except Exception as e:
-                print("TelegramListener: Error in updates polling:")
-                print_exception(e)
-                # Network backoff: pause to allow connection issues to resolve
-                await uasyncio.sleep(5)
+                while self.is_listening:
+                    try:
+                        # Perform long polling request
+                        updates = await self._api_request("getUpdates", {
+                            "offset": self.offset,
+                            "timeout": 30,
+                            "allowed_updates": ["message"]
+                        })
 
-        print("TelegramListener: Polling loop stopped.")
+                        if updates and updates.get("ok"):
+                            for update in updates.get("result", []):
+                                # Track offset to avoid fetching duplicates
+                                self.offset = update["update_id"] + 1
+                                
+                                message = update.get("message")
+                                if message:
+                                    await self._handle_message(message)
+                        
+                    except uasyncio.CancelledError:
+                        print("TelegramListener: Loop cancelled.")
+                        break
+                    except Exception as e:
+                        print("TelegramListener: Error in updates polling:")
+                        print_exception(e)
+                        # Network backoff: pause to allow connection issues to resolve
+                        await uasyncio.sleep(5)
+        finally:
+            self.session = None
+
+        print("TelegramListener: Polling loop stopped and session closed.")
 
     async def _handle_message(self, message):
         """Parse incoming Telegram message and trigger pipeline callback."""
@@ -128,7 +137,7 @@ class TelegramListener(BaseListener):
             print_exception(e)
 
     async def _api_request(self, method_name, params=None):
-        """Perform a non-blocking SSL request to the Telegram API.
+        """Perform a non-blocking request to the Telegram API using the persistent session.
 
         Args:
             method_name (str): Telegram API endpoint method.
@@ -137,56 +146,25 @@ class TelegramListener(BaseListener):
         Returns:
             dict: Parsed API JSON response.
         """
-        host = "api.telegram.org"
-        path = f"/bot{self.token}/{method_name}"
-        body = json.dumps(params) if params else ""
+        if not self.session:
+            raise RuntimeError("TelegramListener: ClientSession is not initialized.")
 
-        # Open non-blocking SSL socket connection
-        reader, writer = await uasyncio.open_connection(host, 443, ssl=True)
-        try:
-            # Build standard HTTP/1.1 POST request
-            headers = [
-                f"POST {path} HTTP/1.1",
-                f"Host: {host}",
-                "Connection: close",
-                "Content-Type: application/json",
-                f"Content-Length: {len(body)}"
-            ]
-            request = "\r\n".join(headers) + "\r\n\r\n" + body
+        url = f"https://api.telegram.org/bot{self.token}/{method_name}"
+        headers = {"Content-Type": "application/json"}
+        body = json.dumps(params) if params else None
+
+        # Modern context manager automatically handles socket lifecycle and closing
+        async with self.session.post(url, data=body, headers=headers) as resp:
+            raw_body = await resp.read()
+            if resp.status != 200:
+                body_str = raw_body.decode('utf-8', 'replace')
+                raise RuntimeError(f"HTTP response error: {resp.status}. Body: {body_str}")
             
-            writer.write(request.encode('utf-8'))
-            await writer.drain()
-
-            # Read whole HTTP response stream
-            response_bytes = bytearray()
-            while True:
-                chunk = await reader.read(1024)
-                if not chunk:
-                    break
-                response_bytes.extend(chunk)
-
-            parts = response_bytes.split(b"\r\n\r\n", 1)
-            if len(parts) < 2:
-                raise ValueError("Malformed HTTP response")
-
-            header, body_content = parts[0], parts[1]
-            status_line = header.split(b"\r\n", 1)[0].decode('utf-8')
-            
-            if "200 OK" not in status_line:
-                raise RuntimeError(f"HTTP response error: {status_line}. Body: {body_content.decode('utf-8')}")
-
-            return json.loads(body_content.decode('utf-8'))
-
-        finally:
-            writer.close()
-            if hasattr(writer, 'wait_closed'):
-                try:
-                    await writer.wait_closed()
-                except:
-                    pass
+            # json.loads directly accepts bytes in Python 3/MicroPython, saving a string copy
+            return json.loads(raw_body)
 
     async def _download_file(self, file_path):
-        """Asynchronously download a file from the Telegram servers.
+        """Asynchronously download a file from the Telegram servers using the persistent session.
 
         Args:
             file_path (str): Relative file path returned by getFile.
@@ -194,44 +172,15 @@ class TelegramListener(BaseListener):
         Returns:
             bytes: Downloaded file binary bytes.
         """
-        host = "api.telegram.org"
-        path = f"/file/bot{self.token}/{file_path}"
+        if not self.session:
+            raise RuntimeError("TelegramListener: ClientSession is not initialized.")
 
-        reader, writer = await uasyncio.open_connection(host, 443, ssl=True)
-        try:
-            headers = [
-                f"GET {path} HTTP/1.1",
-                f"Host: {host}",
-                "Connection: close"
-            ]
-            request = "\r\n".join(headers) + "\r\n\r\n"
+        url = f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+
+        # Clean context manager approach, chunked transfer decoding is handled natively by aiohttp
+        async with self.session.get(url) as resp:
+            raw_body = await resp.read()
+            if resp.status != 200:
+                raise RuntimeError(f"HTTP response error downloading file: {resp.status}")
             
-            writer.write(request.encode('utf-8'))
-            await writer.drain()
-
-            response_bytes = bytearray()
-            while True:
-                chunk = await reader.read(1024)
-                if not chunk:
-                    break
-                response_bytes.extend(chunk)
-
-            parts = response_bytes.split(b"\r\n\r\n", 1)
-            if len(parts) < 2:
-                raise ValueError("Malformed HTTP response")
-
-            header, body_content = parts[0], parts[1]
-            status_line = header.split(b"\r\n", 1)[0].decode('utf-8')
-
-            if "200 OK" not in status_line:
-                raise RuntimeError(f"HTTP response error downloading file: {status_line}")
-
-            return bytes(body_content)
-
-        finally:
-            writer.close()
-            if hasattr(writer, 'wait_closed'):
-                try:
-                    await writer.wait_closed()
-                except:
-                    pass
+            return raw_body
