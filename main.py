@@ -15,11 +15,50 @@ def load_config():
         print("Error loading config.json in main:", e)
         return None
 
+def ensure_wifi(config):
+    """Ensure Wi-Fi is active and connected."""
+    try:
+        import network
+        wlan = network.WLAN(network.STA_IF)
+        wlan.active(True)
+        if wlan.isconnected():
+            print("Wi-Fi connected! IP:", wlan.ifconfig()[0])
+            return True
+            
+        ssid = config.get('wifi_ssid')
+        password = config.get('wifi_password')
+        if not ssid or not password:
+            print("Error: Missing wifi_ssid or wifi_password in config.json.")
+            return False
+            
+        print("Connecting to Wi-Fi SSID:", ssid)
+        wlan.connect(ssid, password)
+        
+        import time
+        timeout = 15
+        while not wlan.isconnected() and timeout > 0:
+            time.sleep(1)
+            timeout -= 1
+            print(".", end="")
+            
+        if wlan.isconnected():
+            print("\nWi-Fi Connected! IP:", wlan.ifconfig()[0])
+            return True
+        else:
+            print("\nError: Wi-Fi connection timed out.")
+            return False
+    except Exception as e:
+        print("Note: Skipping hardware Wi-Fi setup:", e)
+        return False
+
 async def main():
     config = load_config()
     if not config or "telegram_token" not in config:
         print("Error: Configuration could not be loaded or missing telegram_token.")
         return
+
+    # 0. Ensure Wi-Fi connection
+    ensure_wifi(config)
 
     # 1. Initialize UART for the thermal printer
     uart = UART(1, baudrate=9600, tx=18, rx=17)

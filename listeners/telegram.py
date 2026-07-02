@@ -66,6 +66,9 @@ class TelegramListener(BaseListener):
                     except uasyncio.CancelledError:
                         print("TelegramListener: Loop cancelled.")
                         break
+                    except OSError as e:
+                        print(f"TelegramListener: Network/DNS connection error ({e}). Retrying in 5s...")
+                        await uasyncio.sleep(5)
                     except Exception as e:
                         print("TelegramListener: Error in updates polling:")
                         print_exception(e)
