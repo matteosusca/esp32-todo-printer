@@ -9,7 +9,12 @@ controlling ESC/POS thermal printers (like the QR203 58mm printer).
 # ==============================================================================
 
 # Initialization
-INIT = b'\x1b\x40'           # ESC @ - Initialize printer
+INIT = b'\x1b\x40\x1b\x74\x00'       # ESC @ (Init) + ESC t 0 (Select CP437 Code Page)
+
+# Code Page Selection Commands (ESC t n)
+CODEPAGE_CP437 = b'\x1b\x74\x00'    # ESC t 0 - Code Page 437 (USA/Standard Europe)
+CODEPAGE_CP850 = b'\x1b\x74\x02'    # ESC t 2 - Code Page 850 (Multilingual)
+CODEPAGE_WPC1252 = b'\x1b\x74\x10'  # ESC t 16 - WPC1252 (Western Europe)
 
 # Basic Feed Control
 LF = b'\x0a'                 # LF - Print and line feed
@@ -41,21 +46,48 @@ REVERSE_OFF = b'\x1d\x42\x00'   # Reverse video print mode off
 # Line Spacing
 LINE_SPACING_DEFAULT = b'\x1b\x32'  # ESC 2 - Default line spacing (1/6 inch)
 
+# Code Page 437 / 850 Character Mapping Table for Western European Accented Characters
+CP437_MAP = {
+    'ç': 0x87, 'ü': 0x81, 'é': 0x82, 'â': 0x83, 'ä': 0x84, 'à': 0x85, 'å': 0x86,
+    'ê': 0x88, 'ë': 0x89, 'è': 0x8a, 'ï': 0x8b, 'î': 0x8c, 'ì': 0x8d, 'Ä': 0x8e,
+    'Å': 0x8f, 'É': 0x90, 'æ': 0x91, 'Æ': 0x92, 'ô': 0x93, 'ö': 0x94, 'ò': 0x95,
+    'û': 0x96, 'ù': 0x97, 'ÿ': 0x98, 'Ö': 0x99, 'Ü': 0x9a, '°': 0xf8, '€': 0xd5,
+    'À': 0x85, 'È': 0x8a, 'Ì': 0x8d, 'Ò': 0x95, 'Ù': 0x97
+}
+
 # ==============================================================================
 # Helper Functions
 # ==============================================================================
 
-def text(string, encoding="utf-8"):
-    """Convert a text string to raw bytes using the specified encoding.
+def text(string, encoding="cp437"):
+    """Convert a text string to printable ESC/POS bytes.
+
+    Translates extended UTF-8 characters (like è, é, à, ò, ù) to the printer's
+    Code Page 437 byte values for accurate physical printing.
 
     Args:
         string (str): The text content to encode.
-        encoding (str): Encoding to use. MicroPython defaults to 'utf-8'.
+        encoding (str): Encoding to use ('cp437', 'cp850', or 'utf-8').
 
     Returns:
         bytes: Raw byte string representation.
     """
-    return string.encode(encoding)
+    if encoding.lower() in ("cp437", "cp850", "auto"):
+        res = bytearray()
+        for char in string:
+            if char in CP437_MAP:
+                res.append(CP437_MAP[char])
+            else:
+                try:
+                    res.extend(char.encode("ascii"))
+                except UnicodeError:
+                    res.extend(char.encode("utf-8"))
+        return bytes(res)
+    else:
+        try:
+            return string.encode(encoding)
+        except (LookupError, UnicodeError):
+            return string.encode("utf-8")
 
 
 def feed(lines=1):
