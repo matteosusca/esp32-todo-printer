@@ -23,17 +23,17 @@ class PrintWorker:
     Maintains controlled pacing to prevent buffer saturation on the thermal printer.
     """
 
-    def __init__(self, uart, app, chunk_size=64, delay_ms=20):
+    def __init__(self, uart, queue, chunk_size=64, delay_ms=20):
         """Initialize the PrintWorker.
 
         Args:
             uart (machine.UART): The initialized UART peripheral.
-            app (core.app.App): The main application instance containing the print queue.
+            queue (uasyncio.Queue): The queue containing print jobs.
             chunk_size (int): Max chunk size (bytes) to write to UART in a single call.
             delay_ms (int): Delay in milliseconds between consecutive chunk writes.
         """
         self.uart = uart
-        self.app = app
+        self.queue = queue
         self.chunk_size = chunk_size
         self.delay_ms = delay_ms
         self.is_running = False
@@ -49,7 +49,7 @@ class PrintWorker:
         while self.is_running:
             try:
                 # Dequeue next job (blocks until a job is available)
-                job = await self.app.get_job()
+                job = await self.queue.get()
                 
                 print("PrintWorker: Dequeued a new print job.")
                 await self.process_job(job)
