@@ -8,8 +8,10 @@ controlling ESC/POS thermal printers (like the QR203 58mm printer).
 # ESC/POS Constants
 # ==============================================================================
 
-# Initialization
-INIT = b'\x1b\x40\x1b\x74\x00'       # ESC @ (Init) + ESC t 0 (Select CP437 Code Page)
+# Initialization (ESC @ + ESC t 0 + ESC ! 0 + ESC 7 n1 n2 n3)
+# Set CP437 code page, reset modes, and set heating parameters (max 64 dots, 800us heat time, 400us heat interval)
+# The heating interval (40 * 10us = 400us) prevents thermal accumulation on long text jobs.
+INIT = b'\x1b\x40\x1b\x74\x00\x1b\x21\x00\x1b\x37\x07\x50\x28'
 
 # Code Page Selection Commands (ESC t n)
 CODEPAGE_CP437 = b'\x1b\x74\x00'    # ESC t 0 - Code Page 437 (USA/Standard Europe)
@@ -29,6 +31,13 @@ ALIGN_RIGHT = b'\x1b\x61\x02'   # Right justification
 # Bold Font (ESC E n)
 BOLD_ON = b'\x1b\x45\x01'       # Turn on bold
 BOLD_OFF = b'\x1b\x45\x00'      # Turn off bold
+
+# Double Strike (ESC G n)
+DOUBLE_STRIKE_ON = b'\x1b\x47\x01'   # Turn on double-strike
+DOUBLE_STRIKE_OFF = b'\x1b\x47\x00'  # Turn off double-strike
+
+# Master Mode Reset (ESC ! n)
+RESET_MODE = b'\x1b\x21\x00'          # Reset all print modes (normal font, no bold/size/underline)
 
 # Underline (ESC - n)
 UNDERLINE_OFF = b'\x1b\x2d\x00'     # Underline off
@@ -260,6 +269,59 @@ def cut(feed_lines=3):
     # m = 66 (Feed paper to cutting position and partial cut)
     # n = feed_lines
     return b'\x1d\x56\x42' + bytes([feed_lines])
+
+
+def set_heat_params(max_dots=7, heating_time=80, heating_interval=40):
+    """Generate command bytes to configure thermal printhead heating parameters (ESC 7).
+
+    Adjusting these parameters prevents thermal saturation (where continuous lines
+    become progressively darker/bolder/blacker due to heat accumulation in the printhead).
+
+    Args:
+        max_dots (int): Max heating dots (0-255, 7 = 64 dots).
+        heating_time (int): Heating time per dot in 10us units (3-255, e.g., 80 = 800us).
+        heating_interval (int): Cooling interval between dots in 10us units (0-255, e.g., 40 = 400us).
+
+    Returns:
+        bytes: ESC 7 command bytes.
+    """
+    return b'\x1b\x37' + bytes([max_dots & 0xFF, heating_time & 0xFF, heating_interval & 0xFF])
+
+
+def set_density(density=15, break_time=4):
+    """Generate command bytes to set print density and heating break time (DC2 # n).
+
+    Args:
+        density (int): Print density level 0 to 31 (default 15).
+        break_time (int): Heating break time level 0 to 7 (default 4).
+
+    Returns:
+        bytes: DC2 # command bytes.
+    """
+    n = (break_time & 0x07) << 5 | (density & 0x1F)
+    return b'\x12\x23' + bytes([n])
+
+
+def double_strike(enable=True):
+    """Generate command bytes to enable or disable double-strike mode.
+
+    Args:
+        enable (bool): True to enable double-strike, False to disable.
+
+    Returns:
+        bytes: ESC G command bytes.
+    """
+    return DOUBLE_STRIKE_ON if enable else DOUBLE_STRIKE_OFF
+
+
+def reset_mode():
+    """Generate command bytes to reset all character print modes to defaults (ESC ! 0).
+
+    Returns:
+        bytes: ESC ! 0 command bytes.
+    """
+    return RESET_MODE
+
 
 
 # ==============================================================================

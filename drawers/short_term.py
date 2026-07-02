@@ -29,6 +29,7 @@ class ShortTermDrawer(BaseDrawer):
         yield escpos.text(f"--- {title_str} ---\n")
         yield escpos.font_size(1, 1)
         yield escpos.bold(False)
+        yield escpos.reset_mode()
         yield escpos.align("left")
         
         # Divider line (384 dots width = 32 chars in Font A)

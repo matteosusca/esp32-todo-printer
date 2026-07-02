@@ -46,6 +46,7 @@ class MiscDrawer(BaseDrawer):
             yield escpos.bold(True)
             yield escpos.text(f"{note.title}\n")
             yield escpos.bold(False)
+            yield escpos.reset_mode()
             yield escpos.align("left")
             yield escpos.text("--------------------------------\n")
 
